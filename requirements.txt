@@ -1,0 +1,38 @@
+# CryptoMind Agent — Dependencies
+
+# Core AI
+anthropic>=0.28.0
+
+# Crypto data
+ccxt>=4.3.0           # Universal crypto exchange library (Binance, Coinbase, etc.)
+pycoingecko>=3.1.0    # CoinGecko API wrapper
+
+# HTTP & async
+httpx>=0.27.0
+aiohttp>=3.9.0
+feedparser>=6.0.11    # RSS feeds (CoinDesk, etc.)
+
+# Memory & vector DB
+mem0ai>=0.1.0         # Persistent agent memory
+qdrant-client>=1.9.0  # Vector database
+
+# Data processing
+pandas>=2.2.0
+numpy>=1.26.0
+ta>=0.11.0            # Technical analysis indicators (RSI, MACD, etc.)
+
+# Dashboard
+streamlit>=1.35.0
+plotly>=5.22.0
+streamlit-autorefresh>=1.0.1
+
+# Scheduler & orchestration
+schedule>=1.2.2
+python-dotenv>=1.0.1
+
+# Notifications
+python-telegram-bot>=21.3
+
+# Testing
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
