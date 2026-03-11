@@ -1,127 +1,214 @@
 """
-CryptoMind Dashboard — Interfaz Streamlit en Español
-Ejecutar con: streamlit run dashboard.py
+CryptoMind Dashboard
+Interfaz visual para el Futures Bot
+Correr con: streamlit run dashboard.py
 """
 
 import streamlit as st
-import pandas as pd
-import sys
+import httpx
+import os
+import json
 import time
-from pathlib import Path
-from dotenv import load_dotenv
 from datetime import datetime
+from dotenv import load_dotenv
+import hmac
+import hashlib
+from urllib.parse import urlencode
 
 load_dotenv(r"C:\Users\jssta\OneDrive\Escritorio\Proyecto crypto\.env")
 
-sys.path.append(str(Path(__file__).parent))
-from crypto_agent import analyze_coin, _paper_trades, _paper_portfolio
+DEMO_API_KEY = os.getenv("BINANCE_DEMO_API_KEY")
+DEMO_SECRET  = os.getenv("BINANCE_DEMO_SECRET")
+BASE_URL     = "https://demo-fapi.binance.com"
 
-st.set_page_config(page_title="CryptoMind Agente", page_icon="🧠", layout="wide")
+st.set_page_config(
+    page_title="CryptoMind Bot",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
 st.markdown("""
 <style>
-    .stApp { background-color: #030712; color: #e2e8f0; }
-    .senal-compra { background: #22c55e20; border: 1px solid #22c55e; border-radius: 8px; padding: 12px; color: #22c55e; font-weight: bold; text-align: center; font-size: 18px; }
-    .senal-venta  { background: #ef444420; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; color: #ef4444; font-weight: bold; text-align: center; font-size: 18px; }
-    .senal-espera { background: #fbbf2420; border: 1px solid #fbbf24; border-radius: 8px; padding: 12px; color: #fbbf24; font-weight: bold; text-align: center; font-size: 18px; }
+    .main { background-color: #0e1117; }
+    .metric-card {
+        background: #1e2329;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        border: 1px solid #2d3139;
+    }
+    .profit { color: #0ecb81; font-size: 24px; font-weight: bold; }
+    .loss   { color: #f6465d; font-size: 24px; font-weight: bold; }
+    .coin-header { font-size: 20px; font-weight: bold; color: #f0b90b; }
 </style>
 """, unsafe_allow_html=True)
 
-with st.sidebar:
-    st.markdown("## 🧠 CRYPTOMIND")
-    st.markdown("*Agente de Trading con IA*")
-    st.markdown("---")
-    moneda = st.selectbox("Seleccionar moneda", ["BTC", "ETH", "SOL", "BNB", "ADA"])
-    st.markdown("---")
-    st.markdown("### 💼 Portafolio Virtual")
-    st.metric("Capital disponible", f"${_paper_portfolio['cash_usd']:,.0f}")
-    st.metric("Operaciones totales", len(_paper_trades))
-    ganancia_total = sum(t.get('pnl', 0) for t in _paper_trades)
-    st.metric("P&L Total", f"${ganancia_total:+.2f}")
-    st.markdown("---")
-    st.caption(f"Última actualización: {datetime.now().strftime('%H:%M:%S')}")
 
-st.markdown("# ⚡ CRYPTOMIND — PANEL DE CONTROL")
+def sign_request(params):
+    sorted_params = dict(sorted(params.items()))
+    query_string  = urlencode(sorted_params)
+    signature     = hmac.new(DEMO_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+    sorted_params["signature"] = signature
+    return sorted_params
+
+def get_headers():
+    return {"X-MBX-APIKEY": DEMO_API_KEY}
+
+def get_server_time():
+    r = httpx.get(f"{BASE_URL}/fapi/v1/time", timeout=10)
+    return r.json()["serverTime"]
+
+@st.cache_data(ttl=15)
+def get_balance():
+    try:
+        params = sign_request({"timestamp": get_server_time()})
+        r = httpx.get(f"{BASE_URL}/fapi/v2/balance", params=params, headers=get_headers(), timeout=10)
+        data = r.json()
+        if isinstance(data, list):
+            for item in data:
+                if item.get("asset") == "USDT":
+                    return float(item.get("balance", 0)), float(item.get("availableBalance", 0))
+        return 0, 0
+    except:
+        return 0, 0
+
+@st.cache_data(ttl=15)
+def get_positions():
+    try:
+        params = sign_request({"timestamp": get_server_time()})
+        r = httpx.get(f"{BASE_URL}/fapi/v2/positionRisk", params=params, headers=get_headers(), timeout=10)
+        data = r.json()
+        if isinstance(data, list):
+            return [p for p in data if float(p.get("positionAmt", 0)) != 0]
+        return []
+    except:
+        return []
+
+@st.cache_data(ttl=15)
+def get_price(coin):
+    try:
+        r = httpx.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={coin}USDT", timeout=5)
+        d = r.json()
+        return float(d["lastPrice"]), float(d["priceChangePercent"])
+    except:
+        return 0, 0
+
+@st.cache_data(ttl=30)
+def get_fear_greed():
+    try:
+        r = httpx.get("https://api.alternative.me/fng/?limit=1", timeout=8)
+        d = r.json()["data"][0]
+        return int(d["value"]), d["value_classification"]
+    except:
+        return 50, "Neutral"
+
+@st.cache_data(ttl=30)
+def get_rsi(coin):
+    try:
+        klines = httpx.get(f"https://api.binance.com/api/v3/klines?symbol={coin}USDT&interval=1h&limit=20", timeout=8).json()
+        closes = [float(k[4]) for k in klines]
+        gains  = [max(closes[i]-closes[i-1], 0) for i in range(1, len(closes))]
+        losses = [max(closes[i-1]-closes[i], 0) for i in range(1, len(closes))]
+        ag, al = sum(gains[-14:])/14, sum(losses[-14:])/14
+        return round(100 - (100/(1+ag/al)), 1) if al > 0 else 100
+    except:
+        return 0
+
+# Header
+st.markdown("# 🤖 CryptoMind Futures Bot")
+st.markdown(f"*Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}*")
 st.markdown("---")
+
+# Balance
+balance, available = get_balance()
+fng_score, fng_label = get_fear_greed()
 
 col1, col2, col3, col4 = st.columns(4)
-with col1: st.metric("Monedas monitoreadas", "5")
-with col2: st.metric("Operaciones ejecutadas", len(_paper_trades))
+with col1:
+    st.metric("💰 Balance Total", f"${balance:,.2f} USDT")
+with col2:
+    st.metric("💵 Disponible", f"${available:,.2f} USDT")
 with col3:
-    ganadoras = len([t for t in _paper_trades if t.get('pnl', 0) > 0])
-    tasa = f"{(ganadoras/len(_paper_trades)*100):.0f}%" if _paper_trades else "—"
-    st.metric("Tasa de acierto", tasa)
-with col4: st.metric("Capital inicial", "$10,000")
+    st.metric("📊 En Posiciones", f"${balance - available:,.2f} USDT")
+with col4:
+    color = "🔴" if fng_score < 25 else "🟡" if fng_score < 50 else "🟢"
+    st.metric(f"{color} Fear & Greed", f"{fng_score} — {fng_label}")
 
 st.markdown("---")
 
-boton = st.button(f"▶ ANALIZAR {moneda} AHORA", type="primary", use_container_width=True)
+# Posiciones
+st.markdown("## 📈 Posiciones Abiertas")
+positions = get_positions()
 
-if boton:
-    with st.spinner(f"🧠 El agente está analizando {moneda}..."):
-        placeholder = st.empty()
-        pasos = []
-        for paso in [
-            f"📰 Obteniendo noticias de {moneda} desde CryptoPanic...",
-            f"📊 Consultando precio en tiempo real desde Binance...",
-            "🌡️ Verificando índice de Miedo y Codicia...",
-            "🧠 Buscando patrones en la memoria del agente...",
-            "🔮 Generando señal de trading...",
-        ]:
-            pasos.append(paso)
-            placeholder.info("\n\n".join(pasos))
-            time.sleep(0.4)
+if not positions:
+    st.info("No hay posiciones abiertas actualmente.")
+else:
+    total_pnl = sum(float(p["unRealizedProfit"]) for p in positions)
+    pnl_class = "profit" if total_pnl >= 0 else "loss"
+    st.markdown(f"**PnL Total:** <span class='{pnl_class}'>${total_pnl:+.2f} USDT</span>", unsafe_allow_html=True)
+    st.markdown("")
 
-        resultado = analyze_coin(moneda)
-        placeholder.empty()
-        st.session_state['ultimo_resultado'] = resultado
-        st.session_state['ultima_moneda'] = moneda
-        st.success(f"✅ ¡Análisis completo para {moneda}!")
+    cols = st.columns(max(len(positions), 1))
+    for i, pos in enumerate(positions):
+        with cols[i]:
+            coin     = pos["symbol"].replace("USDT", "")
+            amt      = float(pos["positionAmt"])
+            entry    = float(pos["entryPrice"])
+            mark     = float(pos["markPrice"])
+            pnl      = float(pos["unRealizedProfit"])
+            notional = float(pos["notional"])
+            lev      = pos["leverage"]
+            direction = "LONG 📈" if amt > 0 else "SHORT 📉"
+            pnl_pct  = (pnl / (abs(notional) / int(lev))) * 100
+            pnl_class = "profit" if pnl >= 0 else "loss"
 
-if 'ultimo_resultado' in st.session_state:
-    resultado = st.session_state['ultimo_resultado']
-    moneda_actual = st.session_state['ultima_moneda']
-    st.markdown("---")
-    st.markdown(f"## 📊 Análisis de {moneda_actual}")
-
-    trade_ejecutado = next((t for t in resultado['tool_calls'] if t['tool'] == 'execute_paper_trade'), None)
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("### 🤖 Análisis del Agente")
-        st.markdown(resultado['analysis'])
-
-    with col2:
-        st.markdown("### 🛠️ Herramientas Usadas")
-        nombres_es = {
-            "get_crypto_news": "📰 Noticias crypto",
-            "get_price_data": "📊 Precio en tiempo real",
-            "get_market_sentiment": "🌡️ Sentimiento del mercado",
-            "get_memory": "🧠 Consulta de memoria",
-            "save_memory": "💾 Guardado en memoria",
-            "execute_paper_trade": "🤖 Operación simulada",
-        }
-        for tool in resultado['tool_calls']:
-            st.markdown(f"✓ {nombres_es.get(tool['tool'], tool['tool'])}")
-
-        if trade_ejecutado:
-            st.markdown("---")
-            trade = trade_ejecutado['result']
-            mapa = {"BUY": ("COMPRAR", "senal-compra"), "SELL": ("VENDER", "senal-venta"), "HOLD": ("ESPERAR", "senal-espera")}
-            texto, clase = mapa.get(trade['action'], ("ESPERAR", "senal-espera"))
-            st.markdown(f'<div class="{clase}">📌 OPERACIÓN SIMULADA<br>{texto} {moneda_actual}<br>Confianza: {trade["confidence"]}%</div>', unsafe_allow_html=True)
-
-if _paper_trades:
-    st.markdown("---")
-    st.markdown("## 📋 Historial de Operaciones Simuladas")
-    df = pd.DataFrame(_paper_trades)
-    mapa_accion = {"BUY": "COMPRAR", "SELL": "VENDER", "HOLD": "ESPERAR"}
-    if 'action' in df.columns:
-        df['Acción'] = df['action'].map(mapa_accion)
-    if 'pnl' not in df.columns:
-        df['pnl'] = 0.0
-    cols = {c: n for c, n in [('coin','Moneda'),('Acción','Acción'),('confidence','Confianza (%)'),('pnl','P&L (USD)'),('timestamp','Fecha/Hora')] if c in df.columns}
-    st.dataframe(df[list(cols.keys())].rename(columns=cols), use_container_width=True, hide_index=True)
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="coin-header">{coin}</div>
+                <div style="color:#848e9c; margin:4px 0">{direction} | {lev}x</div>
+                <div style="font-size:13px;color:#848e9c">Entrada: ${entry:,.2f}</div>
+                <div style="font-size:13px;color:#848e9c">Actual: ${mark:,.2f}</div>
+                <div style="font-size:13px;color:#848e9c">Tamaño: ${abs(notional):,.0f}</div>
+                <div style="margin-top:12px" class="{pnl_class}">${pnl:+.2f} ({pnl_pct:+.2f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.caption("⚠️ Solo paper trading — sin dinero real involucrado. No es asesoramiento financiero.")
+
+# Mercado
+st.markdown("## 📊 Mercado en Tiempo Real")
+coins = ["BTC", "ETH", "SOL", "BNB"]
+cols  = st.columns(4)
+
+for i, coin in enumerate(coins):
+    with cols[i]:
+        price, change = get_price(coin)
+        rsi = get_rsi(coin)
+        change_class = "profit" if change >= 0 else "loss"
+        change_emoji = "▲" if change >= 0 else "▼"
+        rsi_color = "#f6465d" if rsi > 70 else "#0ecb81" if rsi < 30 else "#f0b90b"
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="coin-header">{coin}/USDT</div>
+            <div style="font-size:22px;font-weight:bold;color:white;margin:8px 0">${price:,.2f}</div>
+            <div class="{change_class}">{change_emoji} {change:+.2f}%</div>
+            <div style="margin-top:8px;font-size:13px;color:#848e9c">RSI: <span style="color:{rsi_color}">{rsi}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Estado del bot
+st.markdown("## ⚙️ Estado del Bot")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.success("🟢 Bot Activo — analizando cada 30 min")
+with col2:
+    st.info("⚙️ Config: 3x leverage | SL 2% | TP 4% | Confianza mín 70%")
+with col3:
+    st.warning("🔄 Se actualiza automáticamente cada 15 segundos")
+
+st.markdown("---")
+st.markdown("*CryptoMind Bot v2 — Binance Demo Futures*")
