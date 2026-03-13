@@ -20,17 +20,17 @@ from urllib.parse import urlencode
 load_dotenv(r"C:\Users\jssta\OneDrive\Escritorio\Proyecto crypto\.env")
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-DEMO_API_KEY   = os.getenv("BINANCE_DEMO_API_KEY")
-DEMO_SECRET    = os.getenv("BINANCE_DEMO_SECRET")
-BASE_URL       = "https://demo-fapi.binance.com"
+DEMO_API_KEY = os.getenv("BINANCE_API_KEY")
+DEMO_SECRET  = os.getenv("BINANCE_SECRET_KEY")
+BASE_URL     = "https://fapi.binance.com"
 
 LEVERAGE       = 2          # Bajo para market making
-ORDER_SIZE_USD = 150        # Tamaño de cada orden
+ORDER_SIZE_USD = 20        # Tamaño de cada orden
 SPREAD_BASE    = 0.08       # Spread base 0.08% en cada lado
 SPREAD_MAX     = 0.5        # Spread máximo en mercado muy volátil
 REBALANCE_SEC  = 15         # Recolocar órdenes cada 15 segundos
 MAX_INVENTORY  = 3          # Máximo de posiciones abiertas por moneda
-COINS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP"]
+COINS = ["ETH", "SOL", "XRP", "ADA", "TRX", "AVAX", "DOT"]
 
 # Stats globales
 _stats = {coin: {"trades": 0, "pnl_estimado": 0, "spreads_capturados": 0} for coin in COINS}
@@ -98,25 +98,45 @@ def get_position(symbol):
 def set_leverage(symbol, leverage):
     try:
         params = sign_request({"symbol": symbol, "leverage": leverage, "timestamp": get_server_time()})
-        httpx.post(f"{BASE_URL}/fapi/v1/leverage", params=params, headers=get_headers(), timeout=10)
-    except:
+        r = httpx.post(f"{BASE_URL}/fapi/v1/leverage", params=params, headers=get_headers(), timeout=5)
+        print(f"  Leverage response: {r.json()}")
+    except Exception as e:
+        print(f"  Leverage error: {e}")
         pass
 
 def place_limit_order(symbol, side, quantity, price):
-    """Coloca orden límite — clave del market making"""
     try:
+        # Precisión según moneda
+        if "BTC" in symbol:
+            qty = round(quantity, 3)
+            prc = round(round(price / 1.0) * 1.0, 0)
+        elif symbol in ["SOLUSDT", "DOTUSDT"]:
+            qty = round(quantity, 1)
+            prc = round(price, 2)
+        elif symbol in ["AVAXUSDT"]:
+            qty = round(quantity, 0)
+            prc = round(price, 2)
+        elif symbol in ["XRPUSDT", "ADAUSDT", "TRXUSDT"]:
+            qty = round(quantity, 0)
+            prc = round(price, 4)
+        else:
+            qty = round(quantity, 2)
+            prc = round(price, 2)
+
         params = sign_request({
             "symbol": symbol,
             "side": side,
             "type": "LIMIT",
-            "timeInForce": "GTX",   # GTX = Post Only (solo maker, no taker — evita pagar fees)
-            "quantity": round(quantity, 3),
-            "price": round(price, 2),
+            "timeInForce": "GTC",
+            "quantity": qty,
+            "price": prc,
             "timestamp": get_server_time()
         })
-        r = httpx.post(f"{BASE_URL}/fapi/v1/order", params=params, headers=get_headers(), timeout=10)
+        r = httpx.post(f"{BASE_URL}/fapi/v1/order", params=params, headers=get_headers(), timeout=5)
+        print(f"  Orden {side} {symbol}: {r.json()}")
         return r.json()
     except Exception as e:
+        print(f"  Error orden: {e}")
         return {"error": str(e)}
 
 def place_market_order(symbol, side, quantity):
@@ -230,11 +250,21 @@ def market_make_coin(coin):
         cancel_all_orders(symbol)
 
     # Verificar si necesitamos hedgear inventario
-    if should_hedge(pos_amt, mid):
-        hedge_side = "SELL" if pos_amt > 0 else "BUY"
-        hedge_qty  = abs(pos_amt) * 0.5  # Hedgear 50% del inventario
-        place_market_order(symbol, hedge_side, hedge_qty)
-        print(f"  🛡️ {coin} HEDGE: {hedge_side} {hedge_qty:.4f} (inventario: ${pos_amt*mid:+.0f})")
+# STOP LOSS 1% por posición
+        if pos_amt != 0 and unrealized_pnl < -(abs(pos_amt * mid) * 0.01):
+            print(f"  🛑 SL 1% ACTIVADO {coin}: PnL ${unrealized_pnl:.2f} — cerrando")
+            cancel_all_orders(f"{coin}USDT")
+            close_position(f"{coin}USDT", pos_amt)
+            return {"coin": coin, "mid": round(mid,4), "bid": 0, "ask": 0,
+                    "spread_pct": 0, "volatilidad": vol, "skew": 0,
+                    "posicion": 0, "pnl": 0, "bid_ok": False, "ask_ok": False}
+
+        # Verificar si necesitamos hedgear inventario
+        if should_hedge(pos_amt, mid):
+            hedge_side = "SELL" if pos_amt > 0 else "BUY"
+            hedge_qty  = abs(pos_amt) * 0.5
+            place_market_order(symbol, hedge_side, hedge_qty)
+            print(f"  🛡️ {coin} HEDGE: {hedge_side} {hedge_qty:.4f} (inventario: ${pos_amt*mid:+.0f})")
 
     # Poner nuevas órdenes límite
     set_leverage(symbol, LEVERAGE)
@@ -314,7 +344,7 @@ def run_market_maker():
     print(f"📐 Spread base: {SPREAD_BASE}% cada lado")
     print(f"🛡️  Hedge automático si inventario > ${ORDER_SIZE_USD * MAX_INVENTORY}")
     print(f"\nIniciando en 3 segundos...")
-    time.sleep(3)
+    time.sleep(1)
 
     ciclo = 0
     while True:

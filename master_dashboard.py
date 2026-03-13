@@ -15,9 +15,9 @@ from urllib.parse import urlencode
 
 load_dotenv(r"C:\Users\jssta\OneDrive\Escritorio\Proyecto crypto\.env")
 
-DEMO_API_KEY = os.getenv("BINANCE_DEMO_API_KEY")
-DEMO_SECRET  = os.getenv("BINANCE_DEMO_SECRET")
-BASE_URL     = "https://demo-fapi.binance.com"
+DEMO_API_KEY = os.getenv("BINANCE_API_KEY")
+DEMO_SECRET  = os.getenv("BINANCE_SECRET_KEY")
+BASE_URL     = "https://fapi.binance.com"
 COINS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP"]
 
 st.set_page_config(page_title="CryptoMind", page_icon="🤖", layout="wide")

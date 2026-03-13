@@ -20,17 +20,17 @@ load_dotenv(r"C:\Users\jssta\OneDrive\Escritorio\Proyecto crypto\.env")
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.getenv("ANTHROPIC_API_KEY")
-DEMO_API_KEY     = os.getenv("BINANCE_DEMO_API_KEY")
-DEMO_SECRET      = os.getenv("BINANCE_DEMO_SECRET")
-BASE_URL         = "https://demo-fapi.binance.com"
+DEMO_API_KEY   = os.getenv("BINANCE_API_KEY")
+DEMO_SECRET    = os.getenv("BINANCE_SECRET_KEY")
+BASE_URL       = "https://fapi.binance.com"
 
-LEVERAGE         = 5
-TRADE_SIZE_USD   = 100
-MIN_CONFIDENCE   = 72      # Más alto porque el ratio es 5:1 — solo entrar en setups claros
+LEVERAGE         = 2
+TRADE_SIZE_USD   = 20
+MIN_CONFIDENCE   = 78      # Más alto porque el ratio es 5:1 — solo entrar en setups claros
 STOP_LOSS_PCT    = 0.5     # SL 0.5%
 TAKE_PROFIT_PCT  = 2.5     # TP 2.5% → ratio 5:1
 INTERVAL         = "5m"
-COINS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP"]
+COINS = ["ETH", "SOL", "XRP", "ADA", "TRX", "AVAX", "DOT"]
 CICLO_SEGUNDOS   = 5 * 60
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
